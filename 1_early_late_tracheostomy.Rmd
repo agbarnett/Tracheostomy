@@ -1,0 +1,171 @@
+---
+title: "Early versus late tracheostomy study"
+author: "Adrian Barnett"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+##
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, error=FALSE, comment='', dpi=400)
+options(width=1000, scipen = 999) # Wide pages and no scientific numbers
+Missing = function(x) base::sum(is.na(x))
+Mean = function(x) base::mean(x, na.rm=TRUE)
+Median = function(x) stats::quantile(x, probs=0.5, na.rm=TRUE)
+Q1 = function(x) stats::quantile(x, probs=0.25, na.rm=TRUE)
+Q3 = function(x) stats::quantile(x, probs=0.75, na.rm=TRUE)
+Min = function(x) base::min(x, na.rm=TRUE)
+Max = function(x) base::max(x, na.rm=TRUE)
+Sum = function(x) base::sum(x, na.rm=TRUE)
+SD = function(x) stats::sd(x, na.rm=TRUE)
+N = function(x) base::length(x)
+library(survival)
+library(broom)
+library(diagram)
+library(etm) # to estimate change in time after tracheostomy
+library(dplyr)
+library(tables)
+library(pander)
+panderOptions('table.emphasize.rownames', FALSE)
+panderOptions('table.split.table', Inf)
+panderOptions('big.mark', ',')
+library(ggplot2)
+cbPalette = c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+library(survminer) # for Kaplan-Meier
+# function to run change in extra time (Beyersmann/Wolkewitz/Allignol)
+source('1_extra_time.R')
+## main data:
+load('data/AnalysisReady.RData') # from 0_read_data.R
+```
+
+# Methods
+
+## Event times
+
+The key sequence of events is shown in the figure below.
+
+```{r diagram, fig.width=5, fig.height=4}
+source('1_event_diagram.R')
+```
+
+By "outcome" we mean a key outcome of interest, such as eating or starting physiotherapy. Some patients may go straight from being ventilated to the outcome, whereas others may first receive a tracheostomy. Our key research interest is whether the tracheostomy hastens the time to the outcome. We measure this by examining the days between these key events for all patients. The start of ventilation is the first event for every patient.
+
+Here tracheostomy is known as an "intermediate event" because it occurs between the start time and the outcome of interest. To correctly estimate the change in time after tracheostomy we used a method that accounts for the varying time of this intermediate event.
+
+We made the following assumptions concerning two events occurring on the same day:
+
+```{r table.assumption}
+f = data.frame(`Event 1` = c('Ventilation started','Ventilation started','Tracheostomy','Tracheostomy','Outcome'),
+               `Event 2` = c('Outcome','Tracheostomy','Outcome','Death','Death'),
+               `Assummed first` = c('Ventilation started','Ventilation started','Tracheostomy','Tracheostomy','Outcome'))
+pander(f)
+```
+
+
+We used R version 3.5.2 for all analyses. The R code is available here: https://github.com/agbarnett/Tracheostomy.
+
+# Demographics
+
+## Table of categorical variables
+
+```{r demo}
+# table
+cat.tab = tabular( (Heading('Gender')*Gender + 
+                    Heading('Primary diagnosis')*diagnosis +
+                    Heading('ICU survival')*ICUsurv +
+                    Heading('Dead or alive')*dead
+                      ) + 1~((n=1) +  Heading('%')*Percent('col')*Format(digits=0)), data=data) 
+pander(cat.tab)
+```
+
+## Table of continuous variables
+
+```{r mega.table.cont}
+cont.tab = tabular(Heading('Age (years)')*Age 
+                   + Heading('Weight (kg)')*Weight
+                   + Heading('BMI (kg/m2)')*BMI 
+                   + APACHE 
+                   + Heading('Time from ventilation to tracheostomy (days)')*time.to.t
+                   + Heading('SOFA 1')*SOFA1
+                   + Heading('SOFA 2')*SOFA2
+                   + Heading('SOFA 3')*SOFA3
+                   + Heading('SOFA 4')*SOFA4
+                   + Heading('Total ventilation days')*ventdays 
+                   + Heading("Best mobility score when first out of bed exercise")*mobscorebed 
+                   + Heading("Best mobility score on discharge")*mobscoredis
+                   + Heading('Long term survival (years)')*surv.time.years
+                   ~ (Missing + N + Mean*Format(digits=2) + SD*Format(digits=2)+ Min*Format(digits=0)+ Max*Format(digits=0)), data=data)
+pander(cont.tab)
+```
+
+There are some variables with missing values, in particular BMI.
+
+## Histogram of time from ventilation to tracheostomy
+
+```{r dist}
+hplot = ggplot(data=data, aes(x=time.to.t)) +
+  geom_histogram(fill='skyblue')+
+  xlab('Time from ventilation to tracheostomy (days)')+
+  ylab('Count')+
+  theme_bw()
+hplot
+```
+
+There is a positive skew in the time between ventilation and tracheostomy.
+
+# Long-term survival
+
+Long-term survival was monitored from the date of tracheostomy up to `r format(as.Date(last.alive.date, origin='1899-12-30'), '%d-%b-%Y')`. Patients that returned to ICU and received another tracheostomy had their first survival time censored at the time of the second tracheostomy. 
+
+## Kaplan-Meier plot of survival time after tracheostomy
+
+```{r km, fig.width=7, fig.height=6}
+km = survfit(Surv(surv.time.years, dead=="Dead") ~ 1, data=data)
+res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
+res$plot = res$plot +  xlab('Time (years)')+
+  theme(legend.position = 'none') +
+  coord_cartesian(ylim=c(0.4,1))
+print(res)
+```
+
+There are a number of deaths that occur during the ICU stay causing a rapid drop in survival. There is then a relatively steady decline in survival to year seven. The number of patients censored increases greatly from year 4 onwards.
+
+### Survival plot split by early vs late tracheostomy
+
+Below we split the survival curves for early vs late tracheostomy using a split of: 
+
+* up to 7 days as early 
+* 7 or more days as late
+
+```{r km.split, fig.width=7, fig.height=6}
+km = survfit(Surv(surv.time.years, dead=="Dead") ~ early.late, data=data)
+res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
+res$plot = res$plot +  xlab('Time (years)')+
+  theme(legend.position = 'none') +
+  coord_cartesian(ylim=c(0.4,1))
+print(res)
+```
+
+### Regression model for early vs late tracheostomy and long-term survival
+
+Here we use a multiple regression model to estimate the effect of early vs late tracheostomy on long-term survival. We adjust for patient age and gender. We use a Cox survival model and so the estimates are hazard ratios together with 95% confidence intervals.
+
+```{r cox}
+cox = coxph(Surv(surv.time.years, dead=="Dead") ~ time.to.t + I((Age-50)/10) + Gender, data=data)
+to.table = tidy(cox) %>%
+  dplyr::select('term','estimate','conf.low','conf.high','p.value') %>%
+  mutate(estimate = exp(estimate),
+         conf.low = exp(conf.low),
+         conf.high = exp(conf.high),
+         p.value = format.pval(p.value, eps=0.001, digits=3))
+# rename variables
+to.table$term[grep('time.to.t', to.table$term)] = 'Time to tracheostomy (+1 day)'
+to.table$term[grep('Age', to.table$term)] = 'Age (+10 years)'
+to.table$term[grep('Gender', to.table$term)] = 'Gender = Male'
+# table
+pander(to.table, digits=c(0,3,3,3,3))
+prop.test = cox.zph(cox)
+## Looks like time.to.t is non-proportional and should be split after first year (based on graph above)
+```
+
+Each 10 year increase in age greatly increases the hazard of death.
