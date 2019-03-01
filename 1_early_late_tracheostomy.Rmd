@@ -34,6 +34,8 @@ cbPalette = c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", 
 library(survminer) # for Kaplan-Meier
 # function to run change in extra time (Beyersmann/Wolkewitz/Allignol)
 source('1_extra_time.R')
+# function to round with trailing zeros
+roundz  = function(x, digits=0){formatC( round( x, digits ), format='f', digits=digits)}
 ## main data:
 load('data/AnalysisReady.RData') # from 0_read_data.R
 ```
@@ -50,7 +52,7 @@ source('1_event_diagram.R')
 
 By "outcome" we mean a key outcome of interest, such as eating or starting physiotherapy. Some patients may go straight from being ventilated to the outcome, whereas others may first receive a tracheostomy. Our key research interest is whether the tracheostomy hastens the time to the outcome. We measure this by examining the days between these key events for all patients. The start of ventilation is the first event for every patient.
 
-Here tracheostomy is known as an "intermediate event" because it occurs between the start time and the outcome of interest. To correctly estimate the change in time after tracheostomy we used a method that accounts for the varying time of this intermediate event.
+Here tracheostomy is known as an "intermediate event" because it occurs between the start event (ventilation) and the outcome of interest. To correctly estimate the change in time after tracheostomy we used a method that accounts for the varying time of tracheostomy. We used the multi-state modelling approach described in detail by Beyersmann et al (2012) and used the `etm' package in R to estimate the change in length of stay after tracheostomy (Allignoal et al,  2011).
 
 We made the following assumptions concerning two events occurring on the same day:
 
@@ -61,6 +63,7 @@ f = data.frame(`Event 1` = c('Ventilation started','Ventilation started','Trache
 pander(f)
 ```
 
+We censored patients who did not experience the outcome of interest, for example, because they died. We censored them at the last known date they were in ICU, using the available information on their dates of: ventilation, tracheostomy, speaking valve, first physio appointment, first walking, first meal and out-of-bed exercise.
 
 We used R version 3.5.2 for all analyses. The R code is available here: https://github.com/agbarnett/Tracheostomy.
 
@@ -73,7 +76,7 @@ We used R version 3.5.2 for all analyses. The R code is available here: https://
 cat.tab = tabular( (Heading('Gender')*Gender + 
                     Heading('Primary diagnosis')*diagnosis +
                     Heading('ICU survival')*ICUsurv +
-                    Heading('Dead or alive')*dead
+                    Heading('Long-term dead or alive')*dead
                       ) + 1~((n=1) +  Heading('%')*Percent('col')*Format(digits=0)), data=data) 
 pander(cat.tab)
 ```
@@ -98,7 +101,7 @@ cont.tab = tabular(Heading('Age (years)')*Age
 pander(cont.tab)
 ```
 
-There are some variables with missing values, in particular BMI.
+Some variables have a relatively high number of missing values, in particular BMI.
 
 ## Histogram of time from ventilation to tracheostomy
 
@@ -112,6 +115,58 @@ hplot
 ```
 
 There is a positive skew in the time between ventilation and tracheostomy.
+
+# Events in ICU
+
+Here we examine the timing of events in the ICU and test whether having a tracheostomy was associated with shorter times for some events.
+
+```{r include=F}
+# some basic set up
+my.curvlab = c("Tracheostomy by day d", "No tracheostomy by day d")
+my.xlab = 'Days since ventilation, d'
+```
+
+## Time between tracheostomy and food commenced
+ 
+```{r food, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'food', n.boot=100)
+my.ylab = 'Days to food commenced'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+The bottom panel shows the days since ventilation on the x-axis and the remaining expected days until food commenced on the y-axis. We can see that at every day, those who already had a tracheostomy had a shorter remaining time until they commenced food compared with those without a tracheostomy. The top panel shows the weights, which are the times at which patients received the tracheostomy.
+
+The table shows the estimated change in length of stay and associated 95% confidence interval. There was a reduction in the time to commencing food for patients with a tracheostomy, with an average reduction of `r roundz(e$stats$mean,1)` days compared with patients without a tracheostomy. The 95% confidence interval shows that this reduction is strongly statistically significant as the interval does not include zero.
+
+
+## Time between tracheostomy and speaking valve
+
+```{r speaking, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'SVDate', n.boot=100)
+my.ylab = 'Days to speaking valve'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+## Time between tracheostomy and first physio 
+
+```{r physio, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'physio', n.boot=100)
+my.ylab = 'Days to first physio'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+## Time between tracheostomy and first out of bed exercise
+
+```{r exercise, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'exercise', n.boot=100)
+my.ylab = 'Days to first exercise'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
 
 # Long-term survival
 
@@ -169,3 +224,14 @@ prop.test = cox.zph(cox)
 ```
 
 Each 10 year increase in age greatly increases the hazard of death.
+
+# References
+
+* Arthur Allignol, Martin Schumacher, Jan Beyersmann (2011). Empirical Transition Matrix of Multi-State
+  Models: The etm Package. Journal of Statistical Software, 38(4), 1-15. URL
+  http://www.jstatsoft.org/v38/i04/.
+  
+* Jan Beyersmann, Arthur Allignol and Martin Schumacher (2012). Competing Risks and Multistate Models with R. Springer. DOI: 10.1007/978-1-4614-2035-4
+
+* R Core Team (2018). R: A language and environment for statistical computing. R Foundation for Statistical
+  Computing, Vienna, Austria. URL https://www.R-project.org/.
