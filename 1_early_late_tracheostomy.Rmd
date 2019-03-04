@@ -168,62 +168,82 @@ pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), d
 ```
 
 
-# Long-term survival
+# Short- and long-term survival
+
+We examine two time-frames using survival analysis: 1) during ICU (short-term), and 2) for those that were discharged alive from ICU (long-term).  
 
 Long-term survival was monitored from the date of tracheostomy up to `r format(as.Date(last.alive.date, origin='1899-12-30'), '%d-%b-%Y')`. Patients that returned to ICU and received another tracheostomy had their first survival time censored at the time of the second tracheostomy. 
 
-## Kaplan-Meier plot of survival time after tracheostomy
-
-```{r km, fig.width=7, fig.height=6}
-km = survfit(Surv(surv.time.years, dead=="Dead") ~ 1, data=data)
-res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
-res$plot = res$plot +  xlab('Time (years)')+
-  theme(legend.position = 'none') +
-  coord_cartesian(ylim=c(0.4,1))
-print(res)
-```
-
-There are a number of deaths that occur during the ICU stay causing a rapid drop in survival. There is then a relatively steady decline in survival to year seven. The number of patients censored increases greatly from year 4 onwards.
-
-### Survival plot split by early vs late tracheostomy
-
-Below we split the survival curves for early vs late tracheostomy using a split of: 
+We split the Kaplan-Meier survival curves by early vs late tracheostomy using a split of: 
 
 * up to 7 days as early 
 * 7 or more days as late
 
-```{r km.split, fig.width=7, fig.height=6}
-km = survfit(Surv(surv.time.years, dead=="Dead") ~ early.late, data=data)
-res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
-res$plot = res$plot +  xlab('Time (years)')+
-  theme(legend.position = 'none') +
-  coord_cartesian(ylim=c(0.4,1))
-print(res)
+
+```{r groups, include=FALSE}
+# new cohort of just survivors from ICU:
+survived = filter(data, ICUsurv == 'Yes')
+# create new variable that measures ICU survival time, from tracheostomy date to dead or last ICU date
+data = mutate(data, 
+              surv.time.ICU = ifelse(ICUsurv=="No", DeathDate - tdate, max.ICU.date - tdate))
 ```
 
-### Regression model for early vs late tracheostomy and long-term survival
+## Kaplan-Meier plot of survival time after tracheostomy split by early vs late tracheostomy during ICU stay
 
-Here we use a multiple regression model to estimate the effect of early vs late tracheostomy on long-term survival. We adjust for patient age and gender. We use a Cox survival model and so the estimates are hazard ratios together with 95% confidence intervals.
+```{r km, fig.width=7, fig.height=6}
+km = survfit(Surv(surv.time.ICU, ICUsurv=="No") ~ early.late, data=data) # whole cohort
+res.short = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
+res.short$plot = res.short$plot + xlab('Time (days)')
+print(res.short)
+```
+
+The vertical notches on the survival curves are censored patients, which will be those patients who were discharged from ICU and hence no longer at risk.
+The two survival curves are close
+
+### Long-term survival plot split by early vs late tracheostomy for those who were discharged alive from ICU
+
+```{r km.split, fig.width=7, fig.height=6}
+km = survfit(Surv(surv.time.years, dead=="Dead") ~ early.late, data=survived) # cohort of just those who survived ICU
+res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
+res$plot = res$plot +  xlab('Time (years)')+
+  coord_cartesian(ylim=c(0.6, 1)) # reduce white space on y-axes
+print(res)
+# log-rank test
+ltest = survdiff(Surv(surv.time.years, dead=="Dead") ~ early.late, data=survived)
+ltest$pval = format.pval(1 - pchisq(ltest$chisq, 1), eps=0.001, digits=3)
+```
+
+The vertical notches on the survival curves are censored patients, which are those patients still alive at the date their records were checked against the national death index.
+The survival curves do appear somewhat different, with a better long-term survival for those with a later tracheostomy. However, the log-rank test does not show a statistical difference (Chi-squared statistic = `r roundz(ltest$chisq,3)`, P-value = `r ltest$pval`).
+Note the y-axis does not start at a survival of zero.
+
+### Regression model for early vs late tracheostomy and long-term survival for those who were discharged alive from ICU
+
+Here we use a multiple regression model to estimate the effect of early vs late tracheostomy on long-term survival. We adjust for patient age and gender. We use a Cox survival model and so the estimates are hazard ratios together with 95% confidence intervals (CIs).
 
 ```{r cox}
-cox = coxph(Surv(surv.time.years, dead=="Dead") ~ time.to.t + I((Age-50)/10) + Gender, data=data)
+cox = coxph(Surv(surv.time.years, dead=="Dead") ~ time.to.t + I((Age-50)/10) + Gender, data=survived)
 to.table = tidy(cox) %>%
   dplyr::select('term','estimate','conf.low','conf.high','p.value') %>%
   mutate(estimate = exp(estimate),
          conf.low = exp(conf.low),
          conf.high = exp(conf.high),
-         p.value = format.pval(p.value, eps=0.001, digits=3))
+         p.value = format.pval(p.value, eps=0.001, digits=3)) %>%
+  rename('Variable' = 'term',
+         `Hazard Ratio` = 'estimate',
+         `Lower CI` = 'conf.low',
+         `Upper CI` = 'conf.high',)
 # rename variables
-to.table$term[grep('time.to.t', to.table$term)] = 'Time to tracheostomy (+1 day)'
-to.table$term[grep('Age', to.table$term)] = 'Age (+10 years)'
-to.table$term[grep('Gender', to.table$term)] = 'Gender = Male'
+to.table$Variable[grep('time.to.t', to.table$Variable)] = 'Time to tracheostomy (+1 day)'
+to.table$Variable[grep('Age', to.table$Variable)] = 'Age (+10 years)'
+to.table$Variable[grep('Gender', to.table$Variable)] = 'Gender = Male'
 # table
 pander(to.table, digits=c(0,3,3,3,3))
 prop.test = cox.zph(cox)
 ## Looks like time.to.t is non-proportional and should be split after first year (based on graph above)
 ```
 
-Each 10 year increase in age greatly increases the hazard of death.
+Each 10 year increase in age greatly increases the hazard of death. There was no strong association between tracheostomy timing and the long-term risk of death.
 
 # References
 
