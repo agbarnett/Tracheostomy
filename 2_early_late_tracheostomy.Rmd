@@ -1,0 +1,447 @@
+---
+title: "Early versus late tracheostomy study"
+author: "Adrian Barnett"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+##
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, error=FALSE, comment='', dpi=400)
+options(width=1000, scipen = 999) # Wide pages and no scientific numbers
+Missing = function(x) base::sum(is.na(x))
+Mean = function(x) base::mean(x, na.rm=TRUE)
+Median = function(x) stats::quantile(x, probs=0.5, na.rm=TRUE)
+Q1 = function(x) stats::quantile(x, probs=0.25, na.rm=TRUE)
+Q3 = function(x) stats::quantile(x, probs=0.75, na.rm=TRUE)
+Min = function(x) base::min(x, na.rm=TRUE)
+Max = function(x) base::max(x, na.rm=TRUE)
+Sum = function(x) base::sum(x, na.rm=TRUE)
+SD = function(x) stats::sd(x, na.rm=TRUE)
+N = function(x) base::length(x)
+library(survival)
+library(broom)
+library(diagram)
+library(etm) # to estimate change in time after tracheostomy
+library(dplyr)
+library(tables)
+library(pander)
+panderOptions('table.emphasize.rownames', FALSE)
+panderOptions('table.split.table', Inf)
+panderOptions('big.mark', ',')
+library(ggplot2)
+cbPalette = c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+library(survminer) # for Kaplan-Meier
+# function to run change in extra time (Beyersmann/Wolkewitz/Allignol)
+source('1_extra_time.R')
+# function to round with trailing zeros
+roundz  = function(x, digits=0){formatC( round( x, digits ), format='f', digits=digits)}
+## main data:
+load('data/AnalysisReady.RData') # from 0_read_data.R
+# function used below to rename
+my.rename = function(in.table){
+  in.table$Variable[grep('time.to.t', in.table$Variable)] = 'Time to tracheostomy (+5 days)'
+  in.table$Variable[grep('Age', in.table$Variable)] = 'Age (+10 years)'
+  in.table$Variable[grep('Gender', in.table$Variable)] = 'Gender = Male'
+  in.table$Variable[grep('APACHE', in.table$Variable)] = 'APACHE III (+10)'
+  in.table$Variable[grep('SOFA1', in.table$Variable)] = 'SOFA on day 1 (+3)'
+  in.table$Variable[grep('Intercept', in.table$Variable)] = 'Intercept'
+  return(in.table)
+}
+```
+
+# Methods
+
+## Event times
+
+The key sequence of events in ICU is shown in the figure below.
+
+```{r diagram, fig.width=5, fig.height=4}
+source('1_event_diagram.R')
+```
+
+By "outcome" we mean a key outcome of interest, such as eating or starting physiotherapy. Some patients may go straight from being ventilated to the outcome, whereas others may first receive a tracheostomy. Our key research interest is whether the tracheostomy hastens the time to the outcome. We measure this by examining the days between these key events for all patients. The start of ventilation is the first event for every patient.
+
+Here tracheostomy is known as an "intermediate event" because it occurs between the start event (ventilation) and the outcome of interest. To correctly estimate the change in time after tracheostomy we used a method that accounts for the varying time of tracheostomy. We used the multi-state modelling approach described in detail by Beyersmann et al (2012) and used the `etm' package in R to estimate the change in length of stay after tracheostomy (Allignol et al,  2011).
+
+We made the following assumptions concerning the time order of two events occurring on the same day:
+
+```{r table.assumption}
+f = data.frame(`Event 1` = c('Ventilation started','Ventilation started','Tracheostomy','Tracheostomy','Outcome'),
+               `Event 2` = c('Outcome','Tracheostomy','Outcome','Death','Death'),
+               `Assummed first` = c('Ventilation started','Ventilation started','Tracheostomy','Tracheostomy','Outcome'))
+pander(f)
+```
+
+We censored patients who did not experience the outcome of interest, for example, because they died. We censored them at the last known date they were in ICU, using the available information on their dates of: ventilation, tracheostomy, speaking valve, first physio appointment, first walking, first meal and out-of-bed exercise.
+
+We used R version 3.5.2 for all analyses. The R code is available here: https://github.com/agbarnett/Tracheostomy.
+
+# Demographics
+
+## Table of categorical variables
+
+```{r demo}
+# table
+cat.tab = tabular( (Heading('Gender')*Gender + 
+                    Heading('Primary diagnosis')*diagnosis +
+                    Heading('ICU survival')*ICUsurv +
+                    Heading('Long-term dead or alive')*dead
+                      ) + 1~((n=1) +  Heading('%')*Percent('col')*Format(digits=0)), data=data) 
+pander(cat.tab)
+```
+
+## Table of continuous variables
+
+```{r mega.table.cont}
+cont.tab = tabular(Heading('Age (years)')*Age 
+                   + Heading('Weight (kg)')*Weight
+                   + Heading('BMI (kg/m2)')*BMI 
+                   + APACHE 
+                   + Heading('Time from ventilation to tracheostomy (days)')*time.to.t
+                   + Heading('SOFA 1')*SOFA1
+                   + Heading('SOFA 2')*SOFA2
+                   + Heading('SOFA 3')*SOFA3
+                   + Heading('SOFA 4')*SOFA4
+                   + Heading('Total ventilation days')*ventdays 
+                   + Heading("Best mobility score when first out of bed exercise")*mobscorebed 
+                   + Heading("Best mobility score on discharge")*mobscoredis
+                   + Heading('Long term survival (years)')*surv.time.years
+                   ~ (Missing + N + Mean*Format(digits=2) + SD*Format(digits=2)+ Min*Format(digits=0)+ Max*Format(digits=0)), data=data)
+pander(cont.tab)
+```
+
+Some variables have a relatively high number of missing values, in particular BMI.
+
+## Summary statistics and plots for drugs
+
+### ETT summary table
+
+```{r table.drugs.ett}
+ett.tab = tabular(Heading('Analgesics')*analgesics_ETT
+                   + Heading('Sedatives (Propofol)')*sedatives_ETT
+                   + Heading('Antipsychotics (CPZ - mg)')*antipsychotics_ETT 
+                   + Heading('24 hrs drug free')*`24hrs_drug_free_ETT`
+                   ~ (Missing + N + Mean*Format(digits=2) + SD*Format(digits=2)+ Min*Format(digits=0)+ Max*Format(digits=0)), data=data)
+pander(ett.tab)
+```
+
+### Tracheostomy summary table
+
+```{r table.drugs.trach}
+ett.tab = tabular(Heading('Analgesics')*analgesics_trache
+                   + Heading('Sedatives (Propofol)')*sedatives_trache
+                   + Heading('Antipsychotics (CPZ - mg)')*antipsychotics_trache 
+                   + Heading('24 hrs drug free')*`24hrs_drug_free_trache`
+                   ~ (Missing + N + Mean*Format(digits=2) + SD*Format(digits=2)+ Min*Format(digits=0)+ Max*Format(digits=0)), data=data)
+pander(ett.tab)
+```
+
+### Boxplots comparing drug totals during ETT and Tracheostomy times
+
+```{r boxplot.drugs}
+to.plot = select(data, 'id', 'analgesics_ETT', 'analgesics_trache', 'sedatives_ETT', 'sedatives_trache','antipsychotics_ETT','antipsychotics_trache',"24hrs_drug_free_ETT" ,"24hrs_drug_free_trache") %>%
+  tidyr::gather(variable, value, -id) %>%
+  mutate(treatment = as.numeric(stringr::str_detect(pattern='trache', variable)),
+         treatment = factor(treatment, levels=0:1, labels=c('ETT','Trache')),
+         log = log2(value+1),
+         drug = stringr::str_split(variable, pattern='_', simplify = TRUE)[,1],
+         drug = ifelse(drug=='24hrs', '24 hours drug free', drug)) %>%
+  filter(!is.na(value)) # remove missing
+break.labels = c(0,10,50,250,1000,5000, 50000)
+bplot = ggplot(data=to.plot, aes(x=treatment, y=log, col=treatment))+
+  geom_boxplot()+
+  theme_bw()+
+  xlab('')+
+  ylab('')+
+  scale_y_continuous(breaks=log2(break.labels+1), labels=break.labels)+
+  facet_wrap(~drug, scale='free_y')+
+  theme(legend.position = 'none', panel.grid.minor = element_blank())
+bplot
+```
+
+The y-axes are on a log-scale (base 2) and vary between the four panels because the drug doses are on very different scales.
+
+## Model of drugs comparing daily averages on ETT and Trache
+
+```{r drugs.model}
+```
+
+## Histogram of time from ventilation to tracheostomy
+
+```{r dist}
+hplot = ggplot(data=data, aes(x=time.to.t)) +
+  geom_histogram(fill='skyblue')+
+  xlab('Time from ventilation to tracheostomy (days)')+
+  ylab('Count')+
+  theme_bw()
+hplot
+```
+
+There is a positive skew in the time between ventilation and tracheostomy.
+
+# Time to tracheostomy
+
+Here we examine what types of patients received a tracheostomy. We examine whether variables such as younger age were associated with shorter times to tracheostomy. We model the days between the ventilation starting and the tracheostomy. Patients who died first were censored. The table shows the hazard ratio from a Cox survival model, together with a 95% confidence interval and p-value.
+
+```{r time.to.trache}
+# use function just to get data for risk, not for plotting
+e = extra.time(indata = data, outcome = 'max.ICU.date', n.boot=2)
+to.model = filter(e$out.data, from==0)
+cox = coxph(Surv(time, to==1) ~ I((Age-50)/10) + Gender + I((APACHE-75)/10) + I((SOFA1-9)/3), data=to.model)
+to.table = tidy(cox) %>%
+  dplyr::select('term','estimate','conf.low','conf.high','p.value') %>%
+  mutate(estimate = exp(estimate),
+         conf.low = exp(conf.low),
+         conf.high = exp(conf.high),
+         p.value = format.pval(p.value, eps=0.001, digits=3)) %>%
+  rename('Variable' = 'term',
+         `Hazard Ratio` = 'estimate',
+         `Lower CI` = 'conf.low',
+         `Upper CI` = 'conf.high')
+# rename variables
+to.table = my.rename(to.table)
+# table
+pander(to.table, digits=c(0,3,3,3,3))
+prop.test = cox.zph(cox)
+```
+
+Neither age, gender or comorbidity were associated with the time to tracheostomy.
+
+# Events in ICU
+
+Here we examine the timing of events in the ICU and test whether having a tracheostomy was associated with shorter times for some events.
+
+```{r include=F}
+# some basic set up
+my.curvlab = c("Tracheostomy by day d", "No tracheostomy by day d")
+my.xlab = 'Days since ventilation, d'
+```
+
+## Time between tracheostomy and food commenced
+ 
+```{r food, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'food', n.boot=100)
+my.ylab = 'Days to food commenced'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+The bottom panel shows the days since ventilation on the x-axis and the remaining expected days until food commenced on the y-axis. We can see that at every day, those who already had a tracheostomy had a shorter remaining time until they commenced food compared with those without a tracheostomy. The top panel shows the weights, which are the times at which patients received the tracheostomy.
+
+The table shows the estimated change in length of stay and associated 95% confidence interval. There was a reduction in the time to commencing food for patients with a tracheostomy, with an average reduction of `r roundz(e$stats$mean,1)` days compared with patients without a tracheostomy. In other words, once a patient had a tracheostomy then (on average) they started eating `r roundz(-1*e$stats$mean,1)` days before a patient who did not yet have a tracheostomy. The 95% confidence interval shows that this reduction is strongly statistically significant as the interval does not include zero.
+
+
+## Time between tracheostomy and speaking valve
+
+```{r speaking, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'SVDate', n.boot=100)
+my.ylab = 'Days to speaking valve'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+## Time between tracheostomy and first physio 
+
+```{r physio, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'physio', n.boot=100)
+my.ylab = 'Days to first physio'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+## Time between tracheostomy and first out of bed exercise
+
+```{r exercise, fig.width=6, fig.height=5, dpi=300}
+e = extra.time(indata = data, outcome = 'exercise', n.boot=100)
+my.ylab = 'Days to first exercise'
+plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.ylab)
+pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
+```
+
+# Mobility scores
+
+## Mobility score when first mobilized out of bed
+
+The scatter plot below shows the time to tracheostomy on the x-axis and first mobility score out of bed on the y-axis. The points have been jittered slightly to avoid overlap.
+
+```{r scatter.mob.bed}
+# add back missing results and give them nominal y-axis value
+data = mutate(data, 
+              missing = is.na(mobscorebed),
+              mobscorebed.miss = ifelse(missing, 1, mobscorebed), # set missing to 1
+              missing = factor(as.numeric(missing), levels=0:1, labels=c('No','Yes')))
+# plot with missing
+mplot = ggplot(data=data, aes(x=time.to.t, y=mobscorebed.miss, col=missing)) + 
+  geom_jitter(width=0.2, height=0.1, pch=1) +
+  scale_color_manual('Missing', values=cbPalette[4:5])+
+  xlab('Days from ETT insertion date to Tracheostomy') + 
+  ylab('Mobility score')+
+  scale_y_continuous(breaks=seq(1, 6, 1), labels=c('Missing', 2:6))+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), legend.position = c(0.8,0.8))
+mplot
+```
+
+Most of the scores were clustered near 4. There were `r sum(is.na(data$mobscorebed))` missing mobility scores. Some of these missing values were because the patient never got out of bed.
+
+#### Regression model for the association between tracheostomy time and mobility score when first mobilized out of bed
+
+```{r model.mob.bed}
+model = glm(mobscorebed ~ I((time.to.t-0)/5), data=data)
+to.table = tidy(model, conf.int=TRUE) %>%
+  dplyr::select('term','estimate','conf.low','conf.high','p.value') %>%
+  mutate(p.value = format.pval(p.value, eps=0.001, digits=3)) %>%
+  rename('Variable' = 'term',
+         `Mean` = 'estimate',
+         `Lower CI` = 'conf.low',
+         `Upper CI` = 'conf.high')
+# rename variables (see function in set-up)
+to.table = my.rename(to.table)
+# table
+pander(to.table, digits=c(0,3,3,3,3))
+```
+
+We used a linear regression model to examine the association between time to tracheostomy and mobility score. There was no clear association and the 95% confidence interval contained only a small range of effect of sizes that may not be clinically significant.
+
+## Mobility score on discharge
+
+The scatter plot below shows the time to tracheostomy on the x-axis and best mobility score on discharge on the y-axis. The points have been jittered slightly to avoid overlap.
+
+```{r scatter.mob}
+# add back missing results and give them nominal y-axis value
+data = mutate(data, 
+              missing = is.na(mobscoredis),
+              mobscoredis.miss = ifelse(missing, -1, mobscoredis), # set missing to -1
+              missing = factor(as.numeric(missing), levels=0:1, labels=c('No','Yes')))
+# plot with missing
+mplot = ggplot(data=data, aes(x=time.to.t, y=mobscoredis.miss, col=missing)) + 
+  geom_jitter(width=0.2, height=0.1, pch=1) +
+  xlab('Days from ETT insertion date to Tracheostomy') + 
+  ylab('Mobility score')+
+  scale_color_manual('Missing', values=cbPalette[4:5])+
+  scale_y_continuous(breaks=c(-1, seq(0, 10, 2)), labels=c('Missing', seq(0, 10, 2)))+
+  theme_bw()+
+  theme(panel.grid.minor = element_blank(), legend.position = c(0.85,0.85))
+mplot
+```
+
+There were `r sum(data$missing=='Yes')` missing mobility scores. Some of these missing values were because the patient died and was not discharged.
+
+#### Regression model for the association between tracheostomy time and mobility score on discharge
+
+```{r model.mob}
+model = glm(mobscoredis ~ I((time.to.t-0)/5), data=data)
+to.table = tidy(model, conf.int=TRUE) %>%
+  dplyr::select('term','estimate','conf.low','conf.high','p.value') %>%
+  mutate(p.value = format.pval(p.value, eps=0.001, digits=3)) %>%
+  rename('Variable' = 'term',
+         `Mean` = 'estimate',
+         `Lower CI` = 'conf.low',
+         `Upper CI` = 'conf.high')
+# rename variables (see function in set-up)
+to.table = my.rename(to.table)
+# table
+pander(to.table, digits=c(0,3,3,3,3))
+```
+
+We used a linear regression model to examine the association between time to tracheostomy and mobility score. Longer tracheostomy times were somewhat associated with a lower mobility score.
+
+# Short- and long-term survival
+
+We examine two time-frames using survival analysis: 1) during ICU (short-term), and 2) for those that were discharged alive from ICU (long-term).  
+
+Long-term survival was monitored from the date of tracheostomy up to `r format(as.Date(last.alive.date, origin='1899-12-30'), '%d-%b-%Y')`. Patients that returned to ICU and received another tracheostomy had their first survival time censored at the time of the second tracheostomy. 
+
+We split the Kaplan-Meier survival curves by early vs late tracheostomy using a split of: 
+
+* up to 7 days as early 
+* 7 or more days as late
+
+
+```{r groups, include=FALSE}
+# new cohort of just survivors from ICU:
+survived = filter(data, ICUsurv == 'Yes')
+# create new variable that measures ICU survival time, from tracheostomy date to dead or last ICU date
+data = mutate(data, 
+              surv.time.ICU = ifelse(ICUsurv=="No", DeathDate - tdate, max.ICU.date - tdate))
+```
+
+## Kaplan-Meier plot of survival time after tracheostomy split by early vs late tracheostomy during ICU stay
+
+```{r km, fig.width=7, fig.height=6}
+km = survfit(Surv(surv.time.ICU, ICUsurv=="No") ~ early.late, data=data) # whole cohort
+res.short = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
+res.short$plot = res.short$plot + xlab('Time (days)')
+print(res.short)
+```
+
+The vertical notches on the survival curves are censored patients, which will be those patients who were discharged from ICU and hence no longer at risk.
+The two survival curves are close, indicating little difference in death risk.
+
+## Model of the risk of death in ICU after tracheostomy
+
+```{r model.icu.death}
+e = extra.time(indata = data, outcome = 'ICUdeathDate', n.boot=100)
+```
+
+### Long-term survival plot split by early vs late tracheostomy for those who were discharged alive from ICU
+
+```{r km.split, fig.width=7, fig.height=6}
+km = survfit(Surv(surv.time.years, dead=="Dead") ~ early.late, data=survived) # cohort of just those who survived ICU
+res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
+res$plot = res$plot +  xlab('Time (years)')+
+  coord_cartesian(ylim=c(0.6, 1)) # reduce white space on y-axes
+print(res)
+# log-rank test
+ltest = survdiff(Surv(surv.time.years, dead=="Dead") ~ early.late, data=survived)
+ltest$pval = format.pval(1 - pchisq(ltest$chisq, 1), eps=0.001, digits=3)
+```
+
+The vertical notches on the survival curves are censored patients, which are those patients still alive at the date their records were checked against the national death index.
+The survival curves do appear somewhat different, with a better long-term survival for those with a later tracheostomy. However, the log-rank test does not show a statistical difference (Chi-squared statistic = `r roundz(ltest$chisq,3)`, P-value = `r ltest$pval`).
+Note the y-axis does not start at a survival probability of zero.
+
+### Regression model for early vs late tracheostomy and long-term survival for those who were discharged alive from ICU
+
+Here we use a multiple regression model to estimate the effect of early vs late tracheostomy on long-term survival. We adjust for patient age and gender. We use a Cox survival model and so the estimates are hazard ratios together with 95% confidence intervals (CIs).
+
+```{r cox}
+cox = coxph(Surv(surv.time.years, dead=="Dead") ~ I((time.to.t-0)/5) + I((Age-50)/10) + Gender + I((APACHE-75)/10) + I((SOFA1-9)/3), data=survived)
+to.table = tidy(cox) %>%
+  dplyr::select('term','estimate','conf.low','conf.high','p.value') %>%
+  mutate(estimate = exp(estimate),
+         conf.low = exp(conf.low),
+         conf.high = exp(conf.high),
+         p.value = format.pval(p.value, eps=0.001, digits=3)) %>%
+  rename('Variable' = 'term',
+         `Hazard Ratio` = 'estimate',
+         `Lower CI` = 'conf.low',
+         `Upper CI` = 'conf.high')
+# rename variables
+to.table = my.rename(to.table)
+# table
+pander(to.table, digits=c(0,3,3,3,3))
+prop.test = cox.zph(cox)
+```
+
+Each 10 year increase in age greatly increases the hazard of death. There was no strong association between tracheostomy timing and the long-term risk of death.
+
+# References
+
+* Arthur Allignol, Martin Schumacher, Jan Beyersmann (2011). Empirical Transition Matrix of Multi-State
+  Models: The etm Package. Journal of Statistical Software, 38(4), 1-15. URL
+  http://www.jstatsoft.org/v38/i04/.
+  
+* Jan Beyersmann, Arthur Allignol and Martin Schumacher (2012). Competing Risks and Multistate Models with R. Springer. DOI: 10.1007/978-1-4614-2035-4
+
+* R Core Team (2018). R: A language and environment for statistical computing. R Foundation for Statistical
+  Computing, Vienna, Austria. URL https://www.R-project.org/.
+  
+# Appendix
+
+## Versions of R packages
+
+```{r}
+sessionInfo()
+```

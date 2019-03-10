@@ -1,9 +1,12 @@
 # 0_read_data.R
 # read the data
 # from https://www.dropbox.com/s/pkre0u0glf7zjf1/Data%20to%20Adrian_25.11.18.xls?dl=0
-# Feb 2019
+# March 2019
 library(readxl)
 library(dplyr)
+
+# function used below
+remove7777 <- function(x) {ifelse(x %in% c(666, 7777,8888,9999), NA, x)} 
 
 # some basics
 last.alive.date = 43405 # data of national death index search; 01/11/2018 as a number matching Excel format... 
@@ -36,6 +39,7 @@ demog = read_excel("data/Data to Adrian_25.11.18.xls", sheet=1, skip=0, na=na.st
          SOFA4 = ifelse(SOFA4!=7777, SOFA4, NA),
          Gender = factor(Gender),
          ICUsurv = factor(ICUsurv, levels=2:3, labels=c('Yes','No')),
+         ICUdeathDate = ifelse(ICUsurv=='No', DeathDate, NA), # Date of death in ICU
          diagnosis = factor(diagnosis, levels=1:6, labels=dlabs))
 
 ## sheet 2 - trach
@@ -54,24 +58,22 @@ vent =  read_excel("data/Data to Adrian_25.11.18.xls", sheet=2, skip=0, na=na.st
     'mobscorebed' = "Best mobility score when first out of bed exercise",
     'mobscoredis' = "Best mobility score on discharge",
     'ventdays' = 'Total ventilation days') %>%
-  mutate(id=1:n(),
+  mutate(id=1:n(), # checked and this works
          # replace missing
-         ETTInsertion = ifelse(ETTInsertion %in% c(7777,9999), NA, ETTInsertion),
-         ETTExtubation = ifelse(ETTExtubation %in% c(7777,8888,9999), NA, ETTExtubation),
-         TracheExt = ifelse(TracheExt %in% c(7777,8888,9999), NA, TracheExt),
-         SVDate = ifelse(SVDate %in% c(7777,9999), NA, SVDate),
-         physio = ifelse(physio %in% c(7777,9999), NA, physio),
-         food = ifelse(food %in% c(7777,9999), NA, food),
-         walk = ifelse(walk %in% c(7777,9999), NA, walk),
-         exercise = ifelse(exercise %in% c(7777,9999), NA, exercise),
-         mobscorebed = ifelse(mobscorebed %in% c(7777,9999), NA, mobscorebed),
-         mobscoredis = ifelse(mobscoredis %in% c(7777,9999), NA, mobscoredis),
-         ventdays = ifelse(ventdays!=7777, ventdays, NA),
+         ETTInsertion = remove7777(ETTInsertion),
+         ETTExtubation = remove7777(ETTExtubation),
+         TracheExt = remove7777(TracheExt),
+         SVDate = remove7777(SVDate),
+         physio = remove7777(physio),
+         food = remove7777(food),
+         walk = remove7777(walk),
+         exercise = remove7777(exercise),
+         mobscorebed = remove7777(mobscorebed),
+         mobscoredis = remove7777(mobscoredis),
+         ventdays = remove7777(ventdays),
          # dates / times
          tdate = 25569 + floor(as.numeric(`Tracheotomy date`)/(24*60*60)), # make date into a number; fudge because of Excel dates and time/date format
          time.to.t = tdate - ETTInsertion # ETT insertion date and Tracheostomy date (meaning, looking at it from the beginning of mechanical ventilation)
-#         time.to.p = physio - tdate, # time from Tracheostomy to first physio (may not be useful!)
-#         time.to.e = exercise - tdate # time from Tracheostomy to first out of bed exercise
   )
 as.Date(vent$tdate[1:2], origin='1899-12-30') # ... check
 ## make a variable that is date last seen in ICU
@@ -83,14 +85,16 @@ vent = select(vent, 'id', dates.for.max) %>%
   ungroup() %>%
   right_join(vent, by='id') 
 
-## sheet 3 - drugs (awkard variable naming)
-drugs.list = c('Fentanyl Total(mcg)','Morphine Total (mg)','Analgesics (Morphine - mg)','Midazolam Total (mg)','Propofol Total (mg)','Dexmedetomidine Total (mcg)','Sedatives (Propofol)','Haloperidol Total (mg)','Olanzipine Total (mg)','Risperidone Total (mg)','Quetiapine Total (mg)','Antipsychotics (CPZ - mg)','24hrs drug free')
-drugs =  read_excel("data/Data to Adrian_25.11.18.xls", sheet=3, skip=1, na=na.strings)
-#names(drugs) = c()
+## Drugs. In alternative Excel file
+drugs.list = c('Morphine Total (mg)','Sedatives (Propofol)','Antipsychotics (CPZ - mg)','24hrs drug free')
+drugs =  read_excel("data/Drug data to Adrian_CLEAN_8.3.19.xls", sheet=1, skip=0, na=na.strings) %>%
+  mutate(id=1:n()) %>%
+  mutate_all(remove7777) # remove 7777, 8888, 9999 
 
 ####
 # merge by excel row number (id)
 data = left_join(demog, vent, by='id') %>%
+  left_join(drugs, by='id') %>%
   filter(id != 57) %>% # remove duplicate error for UR 708232
 # calculate survival time, including for censored patients
    mutate(surv.time = ifelse(dead==2, DeathDate - tdate, last.alive.date - tdate)) # dead=2
@@ -121,7 +125,7 @@ data = mutate(data,
               early.late = factor(early.late, levels=1:2, labels=c('Early','Late')))
 
 # save
-save(last.alive.date, data, file='data/AnalysisReady.RData')
+save(last.alive.date, data, drugs.list, file='data/AnalysisReady.RData')
 
 ## checks
 # check long survival times
@@ -134,3 +138,5 @@ head(select(data, UR, tdate, dead, DeathDate, surv.time))
 filter(data, UR%in%duplicates[1:2]) %>%
   select(UR, tdate, dead, DeathDate, surv.time)
 
+# check UR Number line up (demog/ventilation and drugs)
+any(data$UR - data$UR_number !=0) # should be false
