@@ -11,17 +11,17 @@ extra.time = function(indata, outcome, n.boot=100){
 
 ## get our data into Allignol et al format
 our.los.data = filter(indata, is.na(ETTInsertion)==FALSE ) %>% # remove one patient with missing ventilation start
-  mutate(id = 1:n(),
-         DeathDate = ifelse(ICUsurv == 'No', DeathDate, NA)) %>% # only keep death date for those who died in ICU
-  dplyr::select('id', 'UR','ETTInsertion', 'tdate', outcome, 'DeathDate', 'max.ICU.date') %>%
+  mutate(id = 1:n()) %>%
+  dplyr::select('id', 'UR','ETTInsertion', 'tdate', outcome, 'ICUdeathDate', 'max.ICU.date') %>%
   rename('outcome' = outcome) %>% # replace outcome with generic name
-  mutate(censored = is.na(outcome), # flag for censored
+  mutate(ICUdeathDate = ifelse(outcome=='ICUDeath', ICUdeathDate+1, ICUdeathDate), # add one day to date if outcome is ICU death (dummy to avoid overlap)
+         censored = is.na(outcome), # flag for censored
          outcome = ifelse(is.na(outcome), max.ICU.date, outcome)) # replace missing outcome with date last seen in ICU
 
 # loop through patients
 time.data = NULL
 for (p in 1:nrow(our.los.data)){ # loop through patients
-    dates = data.frame(our.los.data[p, c('ETTInsertion', 'tdate', 'outcome', 'DeathDate')]) # just get dates
+    dates = data.frame(our.los.data[p, c('ETTInsertion', 'tdate', 'outcome', 'ICUdeathDate')]) # just get dates
     # if outcome happens on same date as ventilation then assume ventilation happened first (Anna-Liisa by email)
     if(is.na(dates[3])==FALSE){
       if(dates[1] == dates[3]){dates[3] = dates[3] + 0.5; dates[4] = dates[4] + 0.5} # move following event forward by half a day
@@ -91,8 +91,13 @@ if(nrow(filter(time.data, time==0))){cat('Some zero transitions.\n')} # check
   lower = mean.change - (z*se)
   upper = mean.change + (z*se)
   
-  # return stats and plot
+  ## make data for Cox model
+  demog = select(data, 'id','APACHE','SOFA1','Age','Gender') # variables to adjust for
+  out.data = left_join(time.data, demog, by='id')
+  
+  # return stats, plot and data for Cox models
   to.return = list()
+  to.return$out.data = out.data
   to.return$cLOS = cLOS
   to.return$stats = data.frame(outcome=outcome, n.censored=n.censored, mean=mean.change, lower=lower, upper=upper)
   return(to.return)

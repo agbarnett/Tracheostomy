@@ -60,7 +60,7 @@ The key sequence of events in ICU is shown in the figure below.
 source('1_event_diagram.R')
 ```
 
-By "outcome" we mean a key outcome of interest, such as eating or starting physiotherapy. Some patients may go straight from being ventilated to the outcome, whereas others may first receive a tracheostomy. Our key research interest is whether the tracheostomy hastens the time to the outcome. We measure this by examining the days between these key events for all patients. The start of ventilation is the first event for every patient.
+By "outcome" we mean a key outcome of interest, such as eating. Some patients may go straight from being ventilated to the outcome, whereas others may first receive a tracheostomy. Our key research interest is whether the tracheostomy hastens the time to the outcome. We measure this by examining the days between these key events for all patients. The start of ventilation is the first event for every patient.
 
 Here tracheostomy is known as an "intermediate event" because it occurs between the start event (ventilation) and the outcome of interest. To correctly estimate the change in time after tracheostomy we used a method that accounts for the varying time of tracheostomy. We used the multi-state modelling approach described in detail by Beyersmann et al (2012) and used the `etm' package in R to estimate the change in length of stay after tracheostomy (Allignol et al,  2011).
 
@@ -73,7 +73,7 @@ f = data.frame(`Event 1` = c('Ventilation started','Ventilation started','Trache
 pander(f)
 ```
 
-We censored patients who did not experience the outcome of interest, for example, because they died. We censored them at the last known date they were in ICU, using the available information on their dates of: ventilation, tracheostomy, speaking valve, first physio appointment, first walking, first meal and out-of-bed exercise.
+We censored patients who did not experience the outcome of interest, for example, because they died. We censored them at the last known date they were in ICU, using the available information on their dates of: ventilation, tracheostomy, speaking valve, first physio assessment, first walking, first meal and out-of-bed exercise.
 
 We used R version 3.5.2 for all analyses. The R code is available here: https://github.com/agbarnett/Tracheostomy.
 
@@ -241,7 +241,7 @@ plot(e$cLOS, curvlab=my.curvlab, col.e=cbPalette[2:3], xlab=my.xlab, ylab.e=my.y
 pander(select(e$stats, -outcome) %>% rename('Number censored' = 'n.censored'), digits = c(0,2,2,2))
 ```
 
-## Time between tracheostomy and first physio 
+## Time between tracheostomy and first physio assessment
 
 ```{r physio, fig.width=6, fig.height=5, dpi=300}
 e = extra.time(indata = data, outcome = 'physio', n.boot=100)
@@ -378,12 +378,6 @@ print(res.short)
 
 The vertical notches on the survival curves are censored patients, which will be those patients who were discharged from ICU and hence no longer at risk.
 The two survival curves are close, indicating little difference in death risk.
-
-## Model of the risk of death in ICU after tracheostomy
-
-```{r model.icu.death}
-e = extra.time(indata = data, outcome = 'ICUdeathDate', n.boot=100)
-```
 
 ### Long-term survival plot split by early vs late tracheostomy for those who were discharged alive from ICU
 
