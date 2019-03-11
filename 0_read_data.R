@@ -50,6 +50,8 @@ vent =  read_excel("data/Data to Adrian_25.11.18.xls", sheet=2, skip=0, na=na.st
     'ETTInsertion' = 'ETT Insertion',
     'ETTExtubation' = 'ETT Extubation',
     'TracheExt' = 'Trache extubation date',
+    'ETT.days' = "# Days w/ ETT",
+    'trache.days' = '# Days w/ TT',
     'SVDate' = 'SV Date',
     'physio' = 'Date of first physio Rx',
     'food' = 'Date food commenced',

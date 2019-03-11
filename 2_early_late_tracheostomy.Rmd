@@ -20,6 +20,7 @@ Sum = function(x) base::sum(x, na.rm=TRUE)
 SD = function(x) stats::sd(x, na.rm=TRUE)
 N = function(x) base::length(x)
 library(survival)
+library(lme4)
 library(broom)
 library(diagram)
 library(etm) # to estimate change in time after tracheostomy
@@ -113,9 +114,9 @@ pander(cont.tab)
 
 Some variables have a relatively high number of missing values, in particular BMI.
 
-## Summary statistics and plots for drugs
+# Drugs
 
-### ETT summary table
+## ETT summary table
 
 ```{r table.drugs.ett}
 ett.tab = tabular(Heading('Analgesics')*analgesics_ETT
@@ -126,7 +127,7 @@ ett.tab = tabular(Heading('Analgesics')*analgesics_ETT
 pander(ett.tab)
 ```
 
-### Tracheostomy summary table
+## Tracheostomy summary table
 
 ```{r table.drugs.trach}
 ett.tab = tabular(Heading('Analgesics')*analgesics_trache
@@ -137,14 +138,16 @@ ett.tab = tabular(Heading('Analgesics')*analgesics_trache
 pander(ett.tab)
 ```
 
-### Boxplots comparing drug totals during ETT and Tracheostomy times
+## Boxplots comparing drug totals during ETT and Tracheostomy times
 
-```{r boxplot.drugs}
-to.plot = select(data, 'id', 'analgesics_ETT', 'analgesics_trache', 'sedatives_ETT', 'sedatives_trache','antipsychotics_ETT','antipsychotics_trache',"24hrs_drug_free_ETT" ,"24hrs_drug_free_trache") %>%
-  tidyr::gather(variable, value, -id) %>%
+```{r boxplot.drugs.total}
+to.plot = select(data, 'id', 'trache.days', 'ETT.days', 'analgesics_ETT', 'analgesics_trache', 'sedatives_ETT', 'sedatives_trache', 'antipsychotics_ETT', 'antipsychotics_trache', "24hrs_drug_free_ETT" , "24hrs_drug_free_trache") %>%
+  tidyr::gather(variable, value, -id, -trache.days, -ETT.days) %>%
   mutate(treatment = as.numeric(stringr::str_detect(pattern='trache', variable)),
          treatment = factor(treatment, levels=0:1, labels=c('ETT','Trache')),
-         log = log2(value+1),
+         value.stan = ifelse(treatment=='ETT', value/(ETT.days+0.5), value/(trache.days+0.5)), # drugs per day; added 0.5 because otherwise same day events are zero
+         log = log2(value+1), # log transform because of positive skew
+         log.stan = log2(value.stan+1),
          drug = stringr::str_split(variable, pattern='_', simplify = TRUE)[,1],
          drug = ifelse(drug=='24hrs', '24 hours drug free', drug)) %>%
   filter(!is.na(value)) # remove missing
@@ -162,10 +165,49 @@ bplot
 
 The y-axes are on a log-scale (base 2) and vary between the four panels because the drug doses are on very different scales.
 
+## Boxplots comparing drug daily averages during ETT and Tracheostomy times
+
+```{r boxplot.drugs.average}
+bplot = ggplot(data=to.plot, aes(x=treatment, y=log.stan, col=treatment))+
+  geom_boxplot()+
+  theme_bw()+
+  xlab('')+
+  ylab('')+
+  scale_y_continuous(breaks=log2(break.labels+1), labels=break.labels)+
+  facet_wrap(~drug, scale='free_y')+
+  theme(legend.position = 'none', panel.grid.minor = element_blank())
+bplot
+```
+
 ## Model of drugs comparing daily averages on ETT and Trache
 
+We used a linear mixed model to estimate the within-patient change in daily drug averages between the ETT and Trache periods. We log-transformed each patients daily drug averages because of the strong positive skew. We used a random intercept to adjust for repeated data from the same patient. The table shows the mean difference (Trache minus ETT) and 95% confidence intervals. The mean difference is the within-patient average difference in daily drugs. In other words, it is the estimated change in daily drugs when a patient moves from ETT to trache.
+
 ```{r drugs.model}
+models = to.plot %>% group_by(drug) %>%
+ do(m = lmer(log.stan ~ treatment + (1|id), data= .))
+# get the coefficients by group in a tidy data_frame
+mCoef = tidy(models, m, conf.int=TRUE) %>%
+  filter(group=='fixed') %>%
+  select(-group, -statistic) 
+# residuals - to do
+# back-transform parameter estimates from log2
+results = NULL
+for (d in unique(mCoef$drug)){
+  this = filter(mCoef, drug==d)
+  baseline = 2^this$estimate[1]
+  mean = 2^(this$estimate[1] + this$estimate[2])
+  lower = 2^(this$estimate[1] + this$conf.low[2])
+  upper = 2^(this$estimate[1] + this$conf.high[2])
+  frame = data.frame(drug=d, mean=mean-baseline, lower=lower-baseline, upper=upper-baseline)
+  results = rbind(results, frame)
+}
+pander(results, digits=3)
 ```
+
+There was no clear difference in the 24 hour drug free time as the 95% confidence interval contains zero. Patients had higher averages for daily anti-psychotics during the trache period. Conversely patients had lower averages for sedatives and analgesics during the trache period.
+
+# Tracheostomy
 
 ## Histogram of time from ventilation to tracheostomy
 
@@ -180,7 +222,7 @@ hplot
 
 There is a positive skew in the time between ventilation and tracheostomy.
 
-# Time to tracheostomy
+## Time to tracheostomy
 
 Here we examine what types of patients received a tracheostomy. We examine whether variables such as younger age were associated with shorter times to tracheostomy. We model the days between the ventilation starting and the tracheostomy. Patients who died first were censored. The table shows the hazard ratio from a Cox survival model, together with a 95% confidence interval and p-value.
 
