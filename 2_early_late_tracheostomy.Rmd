@@ -402,6 +402,8 @@ We split the Kaplan-Meier survival curves by early vs late tracheostomy using a 
 
 
 ```{r groups, include=FALSE}
+# nicer label for early/late groups:
+data = rename(data, 'TT'='early.late')
 # new cohort of just survivors from ICU:
 survived = filter(data, ICUsurv == 'Yes')
 # create new variable that measures ICU survival time, from tracheostomy date to dead or last ICU date
@@ -412,10 +414,13 @@ data = mutate(data,
 ## Kaplan-Meier plot of survival time after tracheostomy split by early vs late tracheostomy during ICU stay
 
 ```{r km, fig.width=7, fig.height=6}
-km = survfit(Surv(surv.time.ICU, ICUsurv=="No") ~ early.late, data=data) # whole cohort
-res.short = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
-res.short$plot = res.short$plot + xlab('Time (days)')
+km = survfit(Surv(surv.time.ICU, ICUsurv=="No") ~ TT, data=data) # whole cohort
+res.short = ggsurvplot(km, data = data, risk.table="nrisk_cumevents", ylab='')
+res.short$plot = res.short$plot + xlab('Time (days)') + coord_cartesian(xlim=c(0,100)) + ylab('Survival probability')
 print(res.short)
+jpeg('figures/ICU.survival.jpg', width=6, height=5, units='in', res=400, quality=100)
+print(res.short)
+invisible(dev.off())
 ```
 
 The vertical notches on the survival curves are censored patients, which will be those patients who were discharged from ICU and hence no longer at risk.
@@ -424,13 +429,17 @@ The two survival curves are close, indicating little difference in death risk.
 ### Long-term survival plot split by early vs late tracheostomy for those who were discharged alive from ICU
 
 ```{r km.split, fig.width=7, fig.height=6}
-km = survfit(Surv(surv.time.years, dead=="Dead") ~ early.late, data=survived) # cohort of just those who survived ICU
+km = survfit(Surv(surv.time.years, dead=="Dead") ~ TT, data=survived) # cohort of just those who survived ICU
 res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
 res$plot = res$plot +  xlab('Time (years)')+
   coord_cartesian(ylim=c(0.6, 1)) # reduce white space on y-axes
 print(res)
+# export figure
+jpeg('figures/long.term.survival.jpg', width=6, height=5, units='in', res=400, quality=100)
+print(res)
+invisible(dev.off())
 # log-rank test
-ltest = survdiff(Surv(surv.time.years, dead=="Dead") ~ early.late, data=survived)
+ltest = survdiff(Surv(surv.time.years, dead=="Dead") ~ TT, data=survived)
 ltest$pval = format.pval(1 - pchisq(ltest$chisq, 1), eps=0.001, digits=3)
 ```
 
