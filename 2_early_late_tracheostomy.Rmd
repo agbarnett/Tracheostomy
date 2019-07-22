@@ -168,13 +168,16 @@ The y-axes are on a log-scale (base 2) and vary between the four panels because 
 ## Boxplots comparing drug daily averages during ETT and Tracheostomy times
 
 ```{r boxplot.drugs.average}
+# add units to labels
+to.plot = mutate(to.plot, 
+                 facet = ifelse(drug=='24 hours drug free', drug, paste(drug, ' (mg)', sep='')))
 bplot = ggplot(data=to.plot, aes(x=treatment, y=log.stan, col=treatment))+
   geom_boxplot()+
   theme_bw()+
   xlab('')+
   ylab('')+
   scale_y_continuous(breaks=log2(break.labels+1), labels=break.labels)+
-  facet_wrap(~drug, scale='free_y')+
+  facet_wrap(~facet, scale='free_y')+
   theme(legend.position = 'none', panel.grid.minor = element_blank())
 bplot
 ```
@@ -224,7 +227,7 @@ There is a positive skew in the time between ventilation and tracheostomy.
 
 ## Time to tracheostomy
 
-Here we examine what types of patients received a tracheostomy. We examine whether variables such as younger age were associated with shorter times to tracheostomy. We model the days between the ventilation starting and the tracheostomy. Patients who died first were censored. The table shows the hazard ratio from a Cox survival model, together with a 95% confidence interval and p-value.
+Here we examine what types of patients received a tracheostomy. We examine whether variables such as younger age were associated with shorter times to tracheostomy. We model the days between the ventilation starting and the tracheostomy. The table shows the hazard ratio from a Cox survival model, together with a 95% confidence interval and p-value.
 
 ```{r time.to.trache}
 # use function just to get data for risk, not for plotting
