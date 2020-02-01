@@ -92,7 +92,7 @@ cat.tab = tabular( (Heading('Gender')*Gender +
 pander(cat.tab)
 ```
 
-## Table of continuous variables
+## Table of summary statistics for continuous variables using mean and standard deviation
 
 ```{r mega.table.cont}
 cont.tab = tabular(Heading('Age (years)')*Age 
@@ -113,6 +113,39 @@ pander(cont.tab)
 ```
 
 Some variables have a relatively high number of missing values, in particular BMI.
+
+## Check normality of continuous variables
+
+Check of the approximate normality of the continuous variables.
+
+```{r}
+for.panel = select(data, UR, Age, Weight, BMI, APACHE, starts_with('SOFA'), time.to.t, ventdays, surv.time.years) %>%
+  tidyr::gather(-UR, key='var', value='value')
+hplot = ggplot(data=for.panel, aes(x=value))+
+  geom_histogram()+
+  facet_wrap(~var, scales = 'free')+
+  theme_bw()
+hplot
+```
+
+## Table of summary statistics for continuous variables using median and inter-quartile range
+
+```{r mega.table.cont.median}
+cont.tab.median = tabular(Heading('Age (years)')*Age 
+                   + Heading('Weight (kg)')*Weight
+                   + Heading('BMI (kg/m2)')*BMI 
+                   + APACHE 
+                   + Heading('Time from ventilation to tracheostomy (days)')*time.to.t
+                   + Heading('SOFA 1')*SOFA1
+                   + Heading('SOFA 2')*SOFA2
+                   + Heading('SOFA 3')*SOFA3
+                   + Heading('SOFA 4')*SOFA4
+                   + Heading('Total ventilation days')*ventdays 
+                   + Heading('Long term survival (years)')*surv.time.years
+                   ~ (Missing + Median*Format(digits=0) + Q1*Format(digits=0)+ Q3*Format(digits=0)), data=data)
+pander(cont.tab.median)
+```
+
 
 # Drugs
 
@@ -434,7 +467,9 @@ The two survival curves are close, indicating little difference in death risk.
 ```{r km.split, fig.width=7, fig.height=6}
 km = survfit(Surv(surv.time.years, dead=="Dead") ~ TT, data=survived) # cohort of just those who survived ICU
 res = ggsurvplot(km, data = data, risk.table="nrisk_cumevents")
-res$plot = res$plot +  xlab('Time (years)')+
+res$plot = res$plot +  
+  xlab('Time (years)')+
+  geom_vline(xintercept=2, lty=2)+
   coord_cartesian(ylim=c(0.6, 1)) # reduce white space on y-axes
 print(res)
 # export figure
@@ -444,11 +479,15 @@ invisible(dev.off())
 # log-rank test
 ltest = survdiff(Surv(surv.time.years, dead=="Dead") ~ TT, data=survived)
 ltest$pval = format.pval(1 - pchisq(ltest$chisq, 1), eps=0.001, digits=3)
+# predictions at two years
+surv.prob <- summary(km, time=2)$surv
 ```
 
 The vertical notches on the survival curves are censored patients, which are those patients still alive at the date their records were checked against the national death index.
 The survival curves do appear somewhat different, with a better long-term survival for those with a later tracheostomy. However, the log-rank test does not show a statistical difference (Chi-squared statistic = `r roundz(ltest$chisq,3)`, P-value = `r ltest$pval`).
 Note the y-axis does not start at a survival probability of zero.
+
+The dotted vertical line is at two years post-discharge. At this time the estimated survival probability was `r roundz(surv.prob[1], digits=2)` in the early group and `r roundz(surv.prob[2], digits=2)` in the late group.
 
 ### Regression model for early vs late tracheostomy and long-term survival for those who were discharged alive from ICU
 
@@ -474,6 +513,7 @@ prop.test = cox.zph(cox)
 ```
 
 Each 10 year increase in age greatly increases the hazard of death. There was no strong association between tracheostomy timing and the long-term risk of death.
+
 
 # References
 
