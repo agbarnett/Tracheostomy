@@ -489,6 +489,23 @@ Note the y-axis does not start at a survival probability of zero.
 
 The dotted vertical line is at two years post-discharge. At this time the estimated survival probability was `r roundz(surv.prob[1], digits=2)` in the early group and `r roundz(surv.prob[2], digits=2)` in the late group.
 
+#### Statistical comparison of survival at two years
+
+```{r two.years}
+# censor time and status at 2 years:
+survived.two  = mutate(survived, 
+                   dead = as.character(dead), # Convert back to character
+                   over2 = surv.time.years > 2,
+                   surv.time.years = ifelse(over2==TRUE, 2, surv.time.years), 
+                   dead = ifelse(over2==TRUE, 'Alive', dead))
+# log-rank test
+ltest = survdiff(Surv(surv.time.years, dead=="Dead") ~ TT, data=survived.two)
+ltest$pval = format.pval(1 - pchisq(ltest$chisq, 1), eps=0.001, digits=3)
+```
+
+The log-rank test does not show a statistical difference at two years (Chi-squared statistic = `r roundz(ltest$chisq,3)`, P-value = `r ltest$pval`).
+
+
 ### Regression model for early vs late tracheostomy and long-term survival for those who were discharged alive from ICU
 
 Here we use a multiple regression model to estimate the effect of early vs late tracheostomy on long-term survival. We adjust for patient age and gender. We use a Cox survival model and so the estimates are hazard ratios together with 95% confidence intervals (CIs).
